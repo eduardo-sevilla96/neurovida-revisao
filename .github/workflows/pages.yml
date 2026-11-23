@@ -1,0 +1,54 @@
+name: Publicar a revisão
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Versão da cópia
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obter a cópia
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --pattern neurovida-revisao.zip
+          unzip -q neurovida-revisao.zip -d site
+          python3 - <<'PY'
+          from pathlib import Path
+          from html.parser import HTMLParser
+          class Robots(HTMLParser):
+              blocked = False
+              def handle_starttag(self, tag, attrs):
+                  a = dict(attrs)
+                  if tag == 'meta' and a.get('name') == 'robots':
+                      self.blocked |= 'noindex' in a.get('content', '').lower().split(',')
+          for page in Path('site').rglob('*.html'):
+              robots = Robots()
+              robots.feed(page.read_text())
+              assert robots.blocked, page
+          assert Path('site/index.html').is_file()
+          PY
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+  deploy:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.publish.outputs.page_url }}
+    steps:
+      - name: Publicar
+        id: publish
+        uses: actions/deploy-pages@v4
